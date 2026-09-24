@@ -1,0 +1,38 @@
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    app_name: str = "DistributedWebhookSystem"
+    environment: str = "development"
+
+    database_url: str
+
+    redis_url: str
+
+    celery_broker: str
+    celery_result_backend: str
+
+    jwt_secret_key: str
+    hwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 30
+
+    api_key_pepper: str
+
+    webhook_timeout_seconds: int = 10
+
+    max_retry_attempts: int = 5
+
+    rate_limit_request: int = 100
+    rate_limit_window_seconds: int = 60
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+    )
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+settings = get_settings()
