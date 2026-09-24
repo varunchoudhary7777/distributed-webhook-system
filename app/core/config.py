@@ -10,20 +10,20 @@ class Settings(BaseSettings):
 
     redis_url: str
 
-    celery_broker: str
+    celery_broker_url: str
     celery_result_backend: str
 
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
-    
+
     api_key_pepper: str
 
     webhook_timeout_seconds: int = 10
 
     max_retry_attempts: int = 5
 
-    rate_limit_request: int = 100
+    rate_limit_requests: int = 100
     rate_limit_window_seconds: int = 60
 
     model_config = SettingsConfigDict(

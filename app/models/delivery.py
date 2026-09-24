@@ -51,7 +51,7 @@ class Delivery(Base, TimestampMixin):
     attempt_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
-        defalt=0,
+        default=0,
     )
 
     last_http_status: Mapped[int] = mapped_column(

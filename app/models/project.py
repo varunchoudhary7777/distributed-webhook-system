@@ -21,12 +21,11 @@ class Project(Base, TimestampMixin):
     )
 
     owner_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
         ForeignKey(
             "users.id",
             ondelete="CASCADE",
         ),
-        nullanle=False,
+        nullable=False,
         index=True,
     )
 

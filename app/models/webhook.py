@@ -26,7 +26,7 @@ class WebhookEndpoint(Base, TimestampMixin):
 
     url: Mapped[str] = mapped_column(
         Text,
-        nullalbe=False,
+        nullable=False,
     )
 
     signing_secret_hash: Mapped[str] = mapped_column(
