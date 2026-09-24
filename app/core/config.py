@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
-
+    
     api_key_pepper: str
 
     webhook_timeout_seconds: int = 10
