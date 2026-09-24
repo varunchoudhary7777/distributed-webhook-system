@@ -19,6 +19,8 @@ class Settings(BaseSettings):
 
     api_key_pepper: str
 
+    webhook_encryption_key: str
+
     webhook_timeout_seconds: int = 10
 
     max_retry_attempts: int = 5
