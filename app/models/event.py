@@ -1,32 +1,34 @@
 import uuid
 
+
 from sqlalchemy import (
     ForeignKey,
     JSON,
     String,
-    UniqueConstraint,
+    UniqueConstraint, Index, CheckConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, TimestampMixin
+from app.models.base import Base, UUIDPrimaryKey, CreatedAt
 
-class Event(Base, TimestampMixin):
+
+class Event(Base, UUIDPrimaryKey, CreatedAt):
     __tablename__ = "events"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-    )
-
     project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
         ForeignKey(
             "projects.id",
             ondelete="CASCADE",
         ),
         nullable=False,
         index=True,
+    )
+
+    request_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
     )
 
     event_type: Mapped[str] = mapped_column(
@@ -41,7 +43,7 @@ class Event(Base, TimestampMixin):
     )
 
     payload: Mapped[dict] = mapped_column(
-        JSON,
+        JSONB,
         nullable=False,
     )
 
@@ -49,6 +51,15 @@ class Event(Base, TimestampMixin):
         UniqueConstraint(
             "project_id",
             "idempotency_key",
-            name="uq_project_idempotency",
+            name="uq_events_project_idempotency",
+        ),
+        CheckConstraint(
+            "length(idempotency_key) > 0",
+            name="idempotency_key_nonempty",
+        ),
+        Index(
+            "ix_events_project_created",
+            "project_id",
+            "created_at",
         ),
     )

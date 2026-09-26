@@ -3,15 +3,11 @@ import uuid
 from sqlalchemy import Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, TimestampMixin
+from app.models.base import Base, UUIDPrimaryKey, CreatedAt, UpdatedAt
 
-class User(Base, TimestampMixin):
+
+class User(Base, UUIDPrimaryKey, CreatedAt, UpdatedAt):
     __tablename__ = "users"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        primary_key=True,
-        default=uuid.uuid4,
-    )
 
     email: Mapped[str] = mapped_column(
         String(320),
@@ -27,6 +23,7 @@ class User(Base, TimestampMixin):
 
     is_active: Mapped[bool] = mapped_column(
         Boolean,
+        nullable=False,
         default=True,
     )
 
@@ -34,4 +31,10 @@ class User(Base, TimestampMixin):
         "Project",
         back_populates="owner",
         cascade="all, delete-orphan",
+    )
+
+    is_super_user: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
     )

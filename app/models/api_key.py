@@ -10,18 +10,13 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, TimestampMixin
+from app.models.base import Base, CreatedAt, UUIDPrimaryKey
 
-class APIKey(Base, TimestampMixin):
+class APIKey(Base, UUIDPrimaryKey, CreatedAt):
     __tablename__ = "api_keys"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-    )
-
     project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
         ForeignKey(
             "projects.id",
             ondelete="CASCADE",
@@ -60,4 +55,13 @@ class APIKey(Base, TimestampMixin):
     project = relationship(
         "projects",
         back_populates="api_keys",
+    )
+
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )

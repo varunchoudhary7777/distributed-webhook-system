@@ -21,3 +21,4 @@ redis
 pytest
 pytest-asyncio
 cryptography
+booktype

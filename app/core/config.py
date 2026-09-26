@@ -7,10 +7,9 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     database_url: str
-
     redis_url: str
+    rabbitmq_url: str
 
-    celery_broker_url: str
     celery_result_backend: str
 
     jwt_secret_key: str
@@ -28,9 +27,12 @@ class Settings(BaseSettings):
     rate_limit_requests: int = 100
     rate_limit_window_seconds: int = 60
 
+    log_level: str = "INFO"
+
     model_config = SettingsConfigDict(
         env_file=".env",
-        case_sensitive=False,
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
 @lru_cache
