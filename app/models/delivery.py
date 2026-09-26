@@ -9,7 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
-    Text, Index, func, UniqueConstraint,
+    Text, Index, func, UniqueConstraint, CheckConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -94,7 +94,7 @@ class Delivery(Base, UUIDPrimaryKey, CreatedAt, UpdatedAt):
     webhook_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey(
-            "webhooks.id",
+            "webhook.id",
             ondelete="RESTRICT",
         ),
         nullable=False,
@@ -118,7 +118,7 @@ class DeliveryAttempt(UUIDPrimaryKey, CreatedAt, Base):
     delivery_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey(
-            "deliverues.id",
+            "deliveries.id",
             ondelete="CASCADE",
         ),
         nullable=False,

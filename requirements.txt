@@ -22,3 +22,5 @@ pytest
 pytest-asyncio
 cryptography
 booktype
+
+aiosmtplib

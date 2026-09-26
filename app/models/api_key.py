@@ -1,13 +1,14 @@
 import uuid
+
 from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
-    String,
+    String, text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, CreatedAt, UUIDPrimaryKey
@@ -64,4 +65,10 @@ class APIKey(Base, UUIDPrimaryKey, CreatedAt):
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
+    )
+
+    scopes: Mapped[list[str]] = mapped_column(
+        ARRAY(String(80)),
+        nullable=False,
+        server_default=text("'{}'"),
     )

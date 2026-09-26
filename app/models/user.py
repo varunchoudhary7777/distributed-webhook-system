@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, String
+from sqlalchemy import Boolean, String, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, UUIDPrimaryKey, CreatedAt, UpdatedAt
@@ -37,4 +38,9 @@ class User(Base, UUIDPrimaryKey, CreatedAt, UpdatedAt):
         Boolean,
         nullable=False,
         default=False,
+    )
+
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )

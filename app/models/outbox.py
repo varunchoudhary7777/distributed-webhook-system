@@ -8,7 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base, UUIDPrimaryKey, CreatedAt
 
 
-class OutboxMessage(Base, UUIDPrimaryKey, CreatedAt):
+class Outbox(Base, UUIDPrimaryKey, CreatedAt):
     __tablename__ = "outbox_messages"
     __table_args__ = (
         CheckConstraint(

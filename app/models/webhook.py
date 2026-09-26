@@ -8,8 +8,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base, UUIDPrimaryKey, CreatedAt, UpdatedAt
 
 
-class WebhookEndpoint(Base, UUIDPrimaryKey, CreatedAt, UpdatedAt):
-    __tablename__ = "webhook_endpoints"
+class Webhook(Base, UUIDPrimaryKey, CreatedAt, UpdatedAt):
+    __tablename__ = "webhook"
     __table_args__ = (
         CheckConstraint(
             "timeout_seconds BETWEEN 1 AND 60",

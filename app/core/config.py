@@ -29,6 +29,18 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    smtp_host: str
+    smtp_port: int = 587
+    smtp_username: str
+    smtp_password: str
+    smtp_from_email: str
+    public_app_url: str
+
+    access_token_minutes: int =15
+    refresh_token_days: int = 30
+    verification_token_minutes: int =60
+    password_reset_token_minutes: int = 30
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
