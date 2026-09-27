@@ -24,3 +24,4 @@ cryptography
 booktype
 
 aiosmtplib
+PyJWT[crypto]
