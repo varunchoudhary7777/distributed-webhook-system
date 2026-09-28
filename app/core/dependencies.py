@@ -1,107 +1,119 @@
-import uuid
+from datetime import datetime, timezone
+from typing import Annotated
+from uuid import UUID
 
-from fastapi import Depends, HTTPException
-from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from typing import Annotated
-
-from app.core.config import settings
 from app.core.database import get_db
+from app.core.security import decode_access_token, verify_api_key
 from app.models.api_key import APIKey
 from app.models.project import Project
 from app.models.user import User
-from app.core.security import hash_api_key
 
-from fastapi.security import APIKeyHeader
 
-api_key_scheme = APIKeyHeader(
-    name="X-API-Key",
-    auto_error=True,
-)
+bearer_scheme = HTTPBearer(auto_error=False)
 
-oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl="/api/v1/auth/login",
-)
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+
 
 async def get_current_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: DbSession,
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Depends(bearer_scheme),
+    ],
 ) -> User:
-
-    credentials_exception = HTTPException(
-        status_code=401,
-        detail="Invalid authentication credentials",
+    unauthorized = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired credentials",
+        headers={"WWW-Authenticate": "Bearer"},
     )
 
-    try:
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret_key,
-            algorithms=[settings.jwt_algorithm],
-        )
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise unauthorized
 
-        user_id = payload.get("sub")
+    user_id = decode_access_token(credentials.credentials)
+    if user_id is None:
+        raise unauthorized
 
-        if not user_id:
-            raise credentials_exception
-
-        user_uuid = uuid.UUID(user_id)
-
-    except(JWTError, ValueError):
-        raise credentials_exception
-
-    result = await db.execute(
-        select(User).where(
-            User.id == user_uuid,
-        )
-    )
-
-    user = result.scalar_one_or_none()
-
-    if not user or not user.is_active:
-        raise credentials_exception
+    user = await db.get(User, user_id)
+    if user is None or not user.is_active:
+        raise unauthorized
 
     return user
 
-async def get_project_from_api_key(
-    api_key: Annotated[str, Depends(api_key_scheme)],
-    db: Annotated[AsyncSession, Depends(get_db)],
+
+CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+async def get_project_api_key(
+    db: DbSession,
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Depends(bearer_scheme),
+    ],
+) -> APIKey:
+    unauthorized = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired API key",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise unauthorized
+
+    raw_key = credentials.credentials
+    if not raw_key.startswith("whk_") or len(raw_key) < 20:
+        raise unauthorized
+
+    # Key prefix is public and indexed; only the hash is secret.
+    prefix = raw_key[:12]
+    key = await db.scalar(select(APIKey).where(APIKey.key_prefix == prefix))
+    if key is None or not verify_api_key(raw_key, key.key_hash):
+        raise unauthorized
+
+    now = datetime.now(timezone.utc)
+    if (
+        not key.is_active
+        or key.revoked_at is not None
+        or (key.expires_at is not None and key.expires_at <= now)
+    ):
+        raise unauthorized
+
+    project = await db.get(Project, key.project_id)
+    if project is None or not project.is_active:
+        raise unauthorized
+
+    key.last_used_at = now
+    await db.commit()
+    return key
+
+
+CurrentAPIKey = Annotated[APIKey, Depends(get_project_api_key)]
+
+
+async def require_owned_project(
+    project_id: UUID,
+    db: DbSession,
+    user: CurrentUser,
 ) -> Project:
-
-    key_hash = hash_api_key(api_key)
-
-    result = await db.execute(
-        select(APIKey)
-        .where(
-            APIKey.key_hash == key_hash,
-            APIKey.is_active.is_(True),
+    project = await db.scalar(
+        select(Project).where(
+            Project.id == project_id,
+            Project.owner_user_id == user.id,
+            Project.is_active.is_(True),
         )
     )
-
-    api_key_record = result.scalar_one_or_none()
-
-    if not api_key:
+    if project is None:
+        # Avoid confirming that another user's project exists.
         raise HTTPException(
-            status_code=401,
-            detail="Invalid API key",
-        )
-
-    result = await db.execute(
-        select(Project)
-        .where(
-            Project.id == api_key_record.project_id,
-        )
-    )
-
-    project = result.scalar_one_or_none()
-
-    if not project:
-        raise HTTPException(
-            status_code=401,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="Project not found",
         )
-
     return project
+
+
+OwnedProject = Annotated[Project, Depends(require_owned_project)]
