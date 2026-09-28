@@ -1,104 +1,94 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql.annotation import Annotated
+from sqlalchemy.exc import IntegrityError
 
-from app.core.database import get_db
-from app.core.security import create_access_token
-from app.models.user import User
-from app.schemas.auth import (
-    LoginRequest,
-    RegisterRequest,
-    TokenResponse,
-)
-from app.utils.hashing import (
+from app.core.dependencies import CurrentUser, DbSession
+from app.core.security import (
+    ACCESS_TOKEN_MINUTES,
+    create_access_token,
     hash_password,
     verify_password,
 )
-
-router = APIRouter(
-    prefix="/api/v1/auth",
-    tags=["Authentication"],
+from app.models.user import User
+from app.schemas.auth import (
+    LoginRequest,
+    SignupRequest,
+    TokenResponse,
+    UserResponse,
 )
 
-DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+router = APIRouter(prefix="/v1/auth", tags=["auth"])
+
 
 @router.post(
-    "/register",
+    "/signup",
+    response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def register(
-    data: RegisterRequest,
-    db: DbSession,
-):
-    result = await db.execute(
-        select(User).where(
-            User.email == data.email
-        )
-    )
+async def signup(body: SignupRequest, db: DbSession):
+    email = body.email.lower()
 
-    existing_user = result.scalar_one_or_none
-
-    if existing_user:
+    existing = await db.scalar(select(User.id).where(User.email == email))
+    if existing is not None:
         raise HTTPException(
-            status_code=409,
-            detail="Email already registered",
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists",
         )
 
     user = User(
-        email=data.email,
-        password_hash=hash_password(
-            data.password
-        ),
+        email=email,
+        password_hash=hash_password(body.password),
+        is_active=True,
     )
-
     db.add(user)
-    await db.commit()
-    await db.refresh(user)
 
-    return {
-        "id": str(user.id),
-        "email": user.email,
-    }
-
-
-@router.post(
-    "/login",
-    response_model=TokenResponse,
-)
-async def login(
-        data: LoginRequest,
-        db: DbSession,
-):
-
-    result = await db.execute(
-        select(User).where(
-            User.email == data.email,
+    try:
+        await db.commit()
+    except IntegrityError:
+        # The unique constraint handles two concurrent signup requests.
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists",
         )
+
+    await db.refresh(user)
+    return UserResponse(
+        id=str(user.id),
+        email=user.email,
+        is_active=user.is_active,
     )
 
-    user = result.scalar_one_or_none()
 
-    if not user:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid email or password",
-        )
+@router.post("/login", response_model=TokenResponse)
+async def login(body: LoginRequest, db: DbSession):
+    email = body.email.lower()
+    user = await db.scalar(select(User).where(User.email == email))
 
-    if not verify_password(
-        data.password,
-        user.password_hash,
+    # Use one generic error for unknown users and wrong passwords.
+    if (
+        user is None
+        or not user.is_active
+        or not verify_password(body.password, user.password_hash)
     ):
         raise HTTPException(
-            status_code=401,
-            detail="Invalid email or password"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
-    token = create_access_token(
-        str(user.id)
+    token = create_access_token(user_id=user.id)
+    return TokenResponse(
+        access_token=token,
+        expires_in=ACCESS_TOKEN_MINUTES * 60,
     )
 
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-    }
+
+@router.get("/me", response_model=UserResponse)
+async def me(user: CurrentUser):
+    return UserResponse(
+        id=str(user.id),
+        email=user.email,
+        is_active=user.is_active,
+    )
