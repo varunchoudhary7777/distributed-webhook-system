@@ -13,23 +13,21 @@ from app.models.api_key import APIKey
 from app.models.project import Project
 from app.models.user import User
 
-
 bearer_scheme = HTTPBearer(auto_error=False)
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
-
 
 async def get_current_user(
     db: DbSession,
     credentials: Annotated[
         HTTPAuthorizationCredentials | None,
-        Depends(bearer_scheme),
+        Depends(HTTPBearer),
     ],
 ) -> User:
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired credentials",
-        headers={"WWW-Authenticate": "Bearer"},
+        headers={"WWW-Authenticate": "Bearer"}
     )
 
     if credentials is None or credentials.scheme.lower() != "bearer":
@@ -45,9 +43,7 @@ async def get_current_user(
 
     return user
 
-
 CurrentUser = Annotated[User, Depends(get_current_user)]
-
 
 async def get_project_api_key(
     db: DbSession,
@@ -58,18 +54,18 @@ async def get_project_api_key(
 ) -> APIKey:
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid or expired API key",
-        headers={"WWW-Authenticate": "Bearer"},
+        detail="Invalid or expired credentials",
+        headers={"WWW-Authenticate": "Bearer"}
     )
 
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise unauthorized
 
-    raw_key = credentials.credentials
+    raw_key = str(credentials.credentials)
     if not raw_key.startswith("whk_") or len(raw_key) < 20:
         raise unauthorized
 
-    # Key prefix is public and indexed; only the hash is secret.
+    #key prefix is public and indexed; only the hash is secret.
     prefix = raw_key[:12]
     key = await db.scalar(select(APIKey).where(APIKey.key_prefix == prefix))
     if key is None or not verify_api_key(raw_key, key.key_hash):
@@ -91,9 +87,7 @@ async def get_project_api_key(
     await db.commit()
     return key
 
-
 CurrentAPIKey = Annotated[APIKey, Depends(get_project_api_key)]
-
 
 async def require_owned_project(
     project_id: UUID,
@@ -107,13 +101,12 @@ async def require_owned_project(
             Project.is_active.is_(True),
         )
     )
+
     if project is None:
-        # Avoid confirming that another user's project exists.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Project not found",
         )
     return project
-
 
 OwnedProject = Annotated[Project, Depends(require_owned_project)]
