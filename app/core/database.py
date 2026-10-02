@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import (
 from app.core.config import settings
 
 engine = create_async_engine(
-    settings.databse_url,
+    settings.database_url,
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,

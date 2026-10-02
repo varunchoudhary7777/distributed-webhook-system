@@ -25,3 +25,6 @@ booktype
 
 aiosmtplib
 PyJWT[crypto]
+
+cryptography
+email-validator

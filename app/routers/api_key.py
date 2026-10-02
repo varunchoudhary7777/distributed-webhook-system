@@ -1,69 +1,97 @@
-from typing import Annotated
+from datetime import datetime, timezone
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
-from app.core.dependencies import get_current_user
-from app.core.security import (
-    generate_api_key,
-    hash_api_key,
-)
+from app.core.dependencies import CurrentUser, DbSession
+from app.core.security import create_api_key
 from app.models.api_key import APIKey
+from app.models.base import UUIDPrimaryKey
 from app.models.project import Project
-from app.models.user import User
-from app.schemas.api_key import (
-    APIKeyCreate,
-    APIKeyResponse,
-)
+from app.schemas.api_key import APIKeyCreate, APIKeyCreated, APIKeyResponse
 
 router = APIRouter(
-    prefix="/api/v1/projects/{project_id}/api-keys",
-    tags=["API Keys"],
+    prefix = "/v1/projects/{project_id}/api_keys",
+    tags=["api keys"],
 )
 
-@router.post(
-    "",
-    response_model=APIKeyResponse,
-)
-async def create_api_key(
-    project_id: str,
-    data: APIKeyCreate,
-    user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    result = await db.execute(
-        select(Project).where(
+async def _get_owned_project(project_id: UUID, db:DbSession, user: CurrentUser):
+    project = await db.scalar(
+        select(Project)
+        .where(
             Project.id == project_id,
-            Project.owner_id == user.id,
+            Project.owner_user_id == user.id,
+            Project.is_active.is_(True),
         )
     )
-
-    project = result.scalar_one_or_none()
-
-    if not project:
+    if project is None:
         raise HTTPException(
-            status_code=404,
-            detail="Project not found",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="project not found",
         )
+    return project
 
-    raw_key = generate_api_key()
+@router.post("", response_model=APIKeyCreated, status_code=status.HTTP_201_CREATED)
+async def create_key(
+    project_id: UUID,
+    body: APIKeyCreate,
+    db: DbSession,
+    user: CurrentUser,
+):
+    project = await _get_owned_project(project_id, db, user)
+    raw_key, prefix, key_hash = create_api_key()
 
-    api_key = APIKey(
+    record = APIKey(
         project_id=project.id,
-        name=data.name,
-        key_prefix=raw_key[:16],
-        key_hash=hash_api_key(raw_key),
+        key_prefix=prefix,
+        key_hash=key_hash,
+        name=body.name.strip(),
+        is_active=True,
     )
-
-    db.add(api_key)
-
+    db.add(record)
     await db.commit()
-    await db.refresh(api_key)
+    await db.refresh(record)
 
-    return APIKeyResponse(
-        id=str(api_key.id),
-        name=api_key.name,
-        key=raw_key,
+    return APIKeyCreated.model_validate(record)
+
+@router.get("", response_model=list[APIKeyResponse])
+async def list_keys(
+    project_id: UUID,
+    db: DbSession,
+    user: CurrentUser,
+):
+    project = await _get_owned_project(project_id, db, user)
+    records = await db.scalars(
+        select(APIKey)
+        .where(APIKey.project_id == project.id)
+        .order_by(APIKey.created_at.desc())
     )
+    return [
+        APIKeyResponse.model_validate(key)
+        for key in records
+    ]
+
+@router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_key(
+    project_id: UUID,
+    key_id: UUID,
+    db: DbSession,
+    user: CurrentUser,
+):
+    project = await _get_owned_project(project_id, db, user)
+    record = await db.scalar(
+        select(APIKey).where(
+            APIKey.id == key_id,
+            APIKey.project_id == project.id,
+        )
+    )
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not found",
+        )
+    record.is_active = False
+    record.revoked_at = datetime.now(timezone.utc)
+    await db.commit()
+    return None
