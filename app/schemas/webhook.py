@@ -53,4 +53,3 @@ class WebhookResponse(BaseModel):
 
 class WebhookCreated(WebhookResponse):
     secret: str
-    
