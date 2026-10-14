@@ -67,3 +67,9 @@ def hash_api_key(raw_key: str) -> str:
 
 def verify_api_key(raw_key: str, stored_hash: str) -> bool:
     return hmac.compare_digest(hash_api_key(raw_key), stored_hash)
+
+def hash_opaque_token(raw_token: str) -> str:
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+def create_opaque_token(*, user_id: UUID) -> str:
+    return secrets.token_urlsafe(48)
