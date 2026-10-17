@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     redis_url: str
     rabbitmq_url: str
 
+    celery_broker_url: str
+    email_payload_encryption_key: str
     celery_result_backend: str
 
     jwt_secret_key: str

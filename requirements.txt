@@ -28,3 +28,5 @@ PyJWT[crypto]
 
 cryptography
 email-validator
+
+aiosmtplib
