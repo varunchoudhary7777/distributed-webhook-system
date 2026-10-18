@@ -13,6 +13,7 @@ from app.schemas.event import (
 )
 from app.services.event_service import IdempotencyConflict, accept_event
 
+
 router = APIRouter(
     prefix="/v1/events",
     tags=["events"],

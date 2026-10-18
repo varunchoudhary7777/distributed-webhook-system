@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy import select
 
 from app.core.dependencies import CurrentUser, DbSession
@@ -11,10 +12,17 @@ from app.models.base import UUIDPrimaryKey
 from app.models.project import Project
 from app.schemas.api_key import APIKeyCreate, APIKeyCreated, APIKeyResponse
 
+from app.core.api_key_scopes import require_api_key_scope
+
 router = APIRouter(
     prefix = "/v1/projects/{project_id}/api_keys",
     tags=["api keys"],
 )
+
+EventsWriteKey = Annotated[
+    APIKey,
+    Depends(require_api_key_scope("events:write")),
+]
 
 async def _get_owned_project(project_id: UUID, db:DbSession, user: CurrentUser):
     project = await db.scalar(

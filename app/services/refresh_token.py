@@ -134,3 +134,17 @@ async def revoke_refresh_token(
     )
     if row is not None and row.revoked_at is None:
         row.revoked_at = now
+
+async def revoke_all_user_refresh_token(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+) -> None:
+    await db.execute(
+        update(RefreshToken)
+        .where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.revoked_at.is_(None),
+        )
+        .values(revoked_at = datetime.now(timezone.utc))
+    )
