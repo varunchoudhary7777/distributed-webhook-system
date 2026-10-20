@@ -3,6 +3,7 @@ from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
+    public_app_url: str
     app_name: str = "DistributedWebhookSystem"
     environment: str = "development"
 

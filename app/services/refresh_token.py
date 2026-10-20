@@ -12,6 +12,7 @@ from app.core.security import (
 )
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
+from app.services.audit import record_audit
 
 
 class InvalidRefreshToken(Exception):
@@ -43,11 +44,11 @@ async def issue_refresh_token(
     await db.flush()
     return raw
 
-
 async def rotate_refresh_token(
     db: AsyncSession,
     *,
     raw_token: str,
+    source_ip: str | None = None,
 ) -> tuple[User, str]:
     now = datetime.now(timezone.utc)
     token_hash = hash_opaque_token(raw_token)
@@ -56,9 +57,11 @@ async def rotate_refresh_token(
     user: User | None = None
     replacement: str | None = None
 
-    # This function owns the transaction.
+    # This service owns the transaction.
     # Call it with a session that has no active transaction.
     async with db.begin():
+
+        # 1. Find and lock the refresh token.
         row = await db.scalar(
             select(RefreshToken)
             .where(RefreshToken.token_hash == token_hash)
@@ -66,11 +69,10 @@ async def rotate_refresh_token(
         )
 
         if row is None:
-            raise InvalidRefreshToken()
+            invalid_token = True
 
-        # Reuse or replay of a used/revoked token:
-        # revoke all active tokens in its family.
-        if row.used_at is not None or row.revoked_at is not None:
+        # 2. Detect reuse of an already-used or revoked token.
+        elif row.used_at is not None or row.revoked_at is not None:
             await db.execute(
                 update(RefreshToken)
                 .where(
@@ -79,13 +81,16 @@ async def rotate_refresh_token(
                 )
                 .values(revoked_at=now)
             )
+
             invalid_token = True
 
+        # 3. Reject expired tokens.
         elif row.expires_at <= now:
             row.revoked_at = now
             invalid_token = True
 
         else:
+            # 4. Validate the user associated with the token.
             user = await db.get(User, row.user_id)
 
             if (
@@ -97,26 +102,40 @@ async def rotate_refresh_token(
                 invalid_token = True
 
             else:
-                # Consume the old token and issue its replacement
-                # atomically within the same transaction.
+                # 5. Consume the old token.
                 row.used_at = now
 
+                # 6. Issue the replacement in the same transaction.
                 replacement = await issue_refresh_token(
                     db,
                     user_id=user.id,
                     family_id=row.family_id,
                 )
 
-    # The transaction has committed before we raise.
-    # This preserves the revocation changes.
+                # 7. Record the audit event in the same transaction.
+                await record_audit(
+                    db,
+                    action="auth.refresh",
+                    resource_type="user",
+                    actor_user_id=user.id,
+                    resource_id=str(user.id),
+                    source_ip=source_ip,
+                )
+
+    # The transaction has ended here.
+    #
+    # If invalid, any revocation changes above have been committed.
+    # Raise only AFTER leaving the transaction context.
     if invalid_token:
         raise InvalidRefreshToken()
 
-    # Defensive checks for type safety and control-flow clarity.
     if user is None or replacement is None:
-        raise RuntimeError("Refresh-token rotation failed unexpectedly")
+        raise RuntimeError(
+            "Refresh-token rotation failed unexpectedly"
+        )
 
     return user, replacement
+
 
 async def revoke_refresh_token(
     db: AsyncSession,

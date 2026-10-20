@@ -1,7 +1,7 @@
-from datetime import datetime, timezone
-from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -38,12 +38,11 @@ from app.services.refresh_token import (
     rotate_refresh_token,
 )
 
+router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
-router = APIRouter(
-    prefix="/v1/auth",
-    tags=["auth"],
-)
 
+def _client_ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
 
 
 def _user_response(user: User) -> UserResponse:
@@ -54,8 +53,9 @@ def _user_response(user: User) -> UserResponse:
         email_verified=user.email_verified_at is not None,
     )
 
-def _client_ip(request: Request) -> str | None:
-    return request.client.host if request.client else None
+
+def _message(message: str) -> MessageResponse:
+    return MessageResponse(message=message)
 
 
 @router.post(
@@ -72,7 +72,6 @@ async def signup(
 
     try:
         async with db.begin():
-
             user = User(
                 email=email,
                 password_hash=hash_password(body.password),
@@ -80,13 +79,15 @@ async def signup(
             )
             db.add(user)
 
-            # Flush to get user.id before creating the verification token.
+            # Obtain the generated user ID before issuing the token.
             await db.flush()
+
             token = await issue_auth_token(
                 db,
                 user=user,
                 kind="email_verification",
             )
+
             await record_audit(
                 db,
                 action="auth.signup",
@@ -95,17 +96,20 @@ async def signup(
                 resource_id=str(user.id),
                 source_ip=_client_ip(request),
             )
+
     except IntegrityError:
-        await db.rollback()
-        # Do not reveal whether this email is already registered.
-        return MessageResponse(
-            message="If the address can be registered, verification instructions will be sent."
+        # The transaction context rolls back on failure.
+        # Return the same response to avoid account enumeration.
+        return _message(
+            "If the address can be registered, "
+            "verification instructions will be sent."
         )
 
     verify_url = (
         f"{settings.public_app_url.rstrip('/')}/verify-email"
         f"?token={token}"
     )
+
     try:
         await send_account_email(
             recipient=email,
@@ -113,14 +117,21 @@ async def signup(
             text=f"Verify your account using this link:\n{verify_url}\n",
         )
     except Exception:
+        # The account has already been committed.
+        # The user can request another verification email.
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Account created, but verification email could not be sent. Request a new verification email.",
+            detail=(
+                "Account created, but verification email could not be sent. "
+                "Request a new verification email."
+            ),
         )
 
-    return MessageResponse(
-        message="If the address can be registered, verification instructions will be sent."
+    return _message(
+        "If the address can be registered, "
+        "verification instructions will be sent."
     )
+
 
 @router.post("/verify-email", response_model=MessageResponse)
 async def verify_email(
@@ -134,6 +145,7 @@ async def verify_email(
             raw_token=body.token,
             kind="email_verification",
         )
+
         if user is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -143,33 +155,43 @@ async def verify_email(
         if user.email_verified_at is None:
             user.email_verified_at = datetime.now(timezone.utc)
 
-        await record_audit(
-            db,
-            action="auth.email_verified",
-            resource_type="user",
-            actor_user_id=user.id,
-            resource_id=str(user.id),
-            source_ip=_client_ip(request),
-        )
+            await record_audit(
+                db,
+                action="auth.email_verified",
+                resource_type="user",
+                actor_user_id=user.id,
+                resource_id=str(user.id),
+                source_ip=_client_ip(request),
+            )
 
-    return MessageResponse(message="Email verified")
+    return _message("Email verified")
 
-@router.post("/resend-verification", response_model= MessageResponse)
+
+@router.post(
+    "/resend-verification",
+    response_model=MessageResponse,
+)
 async def resend_verification(
     body: ResendVerificationRequest,
     db: DbSession,
 ):
-    generic = MessageResponse(
-        message="If the account needs verification, instructions will be sent."
+    generic = _message(
+        "If the account needs verification, instructions will be sent."
     )
 
     async with db.begin():
         user = await db.scalar(
             select(User).where(User.email == body.email.lower())
         )
-        if user is None or not user.is_active or user.email_verified_at is not None:
+
+        if (
+            user is None
+            or not user.is_active
+            or user.email_verified_at is not None
+        ):
             return generic
 
+        recipient = user.email
 
         token = await issue_auth_token(
             db,
@@ -181,33 +203,42 @@ async def resend_verification(
         f"{settings.public_app_url.rstrip('/')}/verify-email"
         f"?token={token}"
     )
+
     try:
         await send_account_email(
-            recipient=user.email,
+            recipient=recipient,
             subject="Verify your account",
-            text=f"Verify your account using this link:\n{verify_url}\n"
+            text=f"Verify your account using this link:\n{verify_url}\n",
         )
     except Exception:
+        # Preserve the generic response to avoid leaking account details.
         pass
 
     return generic
 
+
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, request: Request, db: DbSession):
+async def login(
+    body: LoginRequest,
+    request: Request,
+    db: DbSession,
+):
     email = body.email.lower()
 
     async with db.begin():
-        user = await db.scalar(select(User).where(User.email == email))
+        user = await db.scalar(
+            select(User).where(User.email == email)
+        )
 
         if (
-                user is None
-                or not user.is_active
-                or not verify_password(body.password, user.password_hash)
+            user is None
+            or not user.is_active
+            or not verify_password(body.password, user.password_hash)
         ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password",
-                headers={"WWW-Authenticate": "Bearer"}
+                headers={"WWW-Authenticate": "Bearer"},
             )
 
         if user.email_verified_at is None:
@@ -216,8 +247,11 @@ async def login(body: LoginRequest, request: Request, db: DbSession):
                 detail="Email verification is required",
             )
 
+        refresh_token = await issue_refresh_token(
+            db,
+            user_id=user.id,
+        )
 
-        refresh_token = await issue_refresh_token(db, user_id=user.id)
         await record_audit(
             db,
             action="auth.login",
@@ -227,11 +261,15 @@ async def login(body: LoginRequest, request: Request, db: DbSession):
             source_ip=_client_ip(request),
         )
 
-    return (TokenResponse(
-        access_token=create_access_token(user_id=user.id),
+        user_id = user.id
+
+    return TokenResponse(
+        access_token=create_access_token(user_id=user_id),
         refresh_token=refresh_token,
         expires_in=ACCESS_TOKEN_MINUTES * 60,
-    ))
+    )
+
+
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(
@@ -240,26 +278,13 @@ async def refresh(
     db: DbSession,
 ):
     try:
-        async with db.begin():
-            user, replacement = await rotate_refresh_token(
-                db,
-                raw_token=body.refresh_token,
-            )
-            await record_audit(
-                db,
-                action="auth.refresh",
-                resource_type="user",
-                actor_user_id=user.id,
-                resource_id=str(user.id),
-                source_ip=_client_ip(request),
-            )
+        user, replacement = await rotate_refresh_token(
+            db,
+            raw_token=body.refresh_token,
+            source_ip=_client_ip(request),
+        )
+
     except InvalidRefreshToken as exc:
-        # Important: if the service marked a token family revoked after
-        # reuse detection, that revocation must commit. Do not raise inside
-        # the transaction and roll it back.
-        await db.rollback()
-        # The service must perform reuse-family revocation in a separate
-        # committed transaction for this exception path. See note below.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
@@ -271,16 +296,21 @@ async def refresh(
         expires_in=ACCESS_TOKEN_MINUTES * 60,
     )
 
+
+
 @router.post("/logout", response_model=MessageResponse)
 async def logout(
     body: LogoutRequest,
-    request: Request,
     db: DbSession,
 ):
     async with db.begin():
-        await revoke_refresh_token(db, raw_token=body.refresh_token)
+        await revoke_refresh_token(
+            db,
+            raw_token=body.refresh_token,
+        )
 
-    return MessageResponse(message="Logged out")
+    return _message("Logged out")
+
 
 @router.post(
     "/password-reset/request",
@@ -291,18 +321,20 @@ async def request_password_reset(
     body: PasswordResetRequest,
     db: DbSession,
 ):
-    # Same response whether the account exists, is inactive, or is unknown.
-    generic = MessageResponse(
-        message="If an active account exists for this address, reset instructions will be sent."
+    generic = _message(
+        "If an active account exists for this address, "
+        "reset instructions will be sent."
     )
-
 
     async with db.begin():
         user = await db.scalar(
             select(User).where(User.email == body.email.lower())
         )
+
         if user is None or not user.is_active:
             return generic
+
+        recipient = user.email
 
         token = await issue_auth_token(
             db,
@@ -314,19 +346,24 @@ async def request_password_reset(
         f"{settings.public_app_url.rstrip('/')}/reset-password"
         f"?token={token}"
     )
+
     try:
         await send_account_email(
-            recipient=user.email,
+            recipient=recipient,
             subject="Reset your password",
             text=f"Reset your password using this link:\n{reset_url}\n",
         )
     except Exception:
-        # Do not expose account existence or token delivery errors publicly.
+        # Never expose account existence or email delivery errors.
         pass
 
     return generic
 
-@router.post("/password-reset/confirm", response_model=MessageResponse)
+
+@router.post(
+    "/password-reset/confirm",
+    response_model=MessageResponse,
+)
 async def confirm_password_reset(
     body: PasswordResetConfirmRequest,
     request: Request,
@@ -338,6 +375,7 @@ async def confirm_password_reset(
             raw_token=body.token,
             kind="password_reset",
         )
+
         if user is None or not user.is_active:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -345,7 +383,11 @@ async def confirm_password_reset(
             )
 
         user.password_hash = hash_password(body.new_password)
-        await revoke_all_user_refresh_token(db, user_id=user.id)
+
+        await revoke_all_user_refresh_token(
+            db,
+            user_id=user.id,
+        )
 
         await record_audit(
             db,
@@ -356,9 +398,9 @@ async def confirm_password_reset(
             source_ip=_client_ip(request),
         )
 
-    return MessageResponse(message="Password updated; please sign in again")
+    return _message("Password updated; please sign in again")
 
 
 @router.get("/me", response_model=UserResponse)
 async def me(user: CurrentUser):
-    return UserResponse.model_validate(user)
+    return _user_response(user)
