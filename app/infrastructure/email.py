@@ -15,7 +15,7 @@ async def send_account_email(*, recipient: str, subject: str, text: str) -> None
         port=settings.smtp_port,
         username=settings.smtp_username,
         password=settings.smtp_password,
-        start_tls=settings.smtp_port == 587,
-        use_tls=settings.smtp_port == 465,
+        start_tls=True,
+        use_tls=False,
         timeout=15,
     )
